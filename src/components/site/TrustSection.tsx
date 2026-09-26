@@ -1,0 +1,2 @@
+const items = [{ title: "Clear choices", copy: "Explore public doctor and service information in one place." }, { title: "Thoughtful privacy", copy: "Sign-in is kept separate from public browsing." }, { title: "Built to grow", copy: "The public website is designed to connect to approved Platform services as they become available." }];
+export function TrustSection() { return <div className="trust-list">{items.map((item) => <article className="trust-item" key={item.title}><strong>{item.title}</strong><p>{item.copy}</p></article>)}</div>; }
