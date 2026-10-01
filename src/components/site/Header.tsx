@@ -2,14 +2,15 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useRef, useState } from "react";
+import { useOptionalAuth } from "../../providers/AuthProvider";
 import { Container } from "./Container";
 import { BOOKING_URL, GOOGLE_PLAY_URL } from "./links";
 
 const links = [
   { href: "/", label: "Home" }, { href: "/doctors", label: "Doctors" },
-  { href: "/services", label: "Services" }, { href: "/specialties", label: "Specialties" },
+  { href: "/services", label: "Services" }, { href: "/clinics", label: "Clinics" }, { href: "/specialties", label: "Specialties" },
   { href: "/health", label: "Health" }, { href: "/about", label: "About" },
 ];
 
@@ -17,7 +18,14 @@ export function Header() {
   const [open, setOpen] = useState(false);
   const toggle = useRef<HTMLButtonElement>(null);
   const pathname = usePathname();
+  const router = useRouter();
+  const auth = useOptionalAuth();
   const close = () => setOpen(false);
+  const signOut = async () => {
+    close();
+    try { await auth?.logout(); }
+    finally { router.replace("/"); }
+  };
   return <>
     <div className="announcement"><Container><span className="announcement-dot" aria-hidden="true" />The CliniQ is under development. Stay tuned for our launch.</Container></div>
     <header className="site-header" onKeyDown={(event) => {
@@ -33,7 +41,7 @@ export function Header() {
           </nav>
           <div className="header-actions">
             <a className="app-link" href={GOOGLE_PLAY_URL}>Get the App <span aria-hidden="true">↗</span></a>
-            <Link className="sign-in-link" href="/sign-in">Sign in</Link>
+            {auth?.user ? <button className="sign-in-link header-sign-out" type="button" onClick={() => void signOut()}>Sign out</button> : <Link className="sign-in-link" href="/sign-in">Sign in</Link>}
             <a className="button booking-button" href={BOOKING_URL}>Book Consultation</a>
             <button ref={toggle} className="menu-toggle" type="button" aria-label={open ? "Close menu" : "Open menu"} aria-expanded={open} aria-controls="mobile-navigation" onClick={() => setOpen(!open)}>
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d={open ? "M6 6l12 12M6 18L18 6" : "M4 6h16M4 12h16M4 18h16"} /></svg>
@@ -42,7 +50,7 @@ export function Header() {
         </div>
         <nav className="mobile-nav" id="mobile-navigation" aria-label="Mobile navigation" hidden={!open}>
           {links.map(({ href, label }) => <Link key={href} href={href} onClick={close} aria-current={(href === "/" ? pathname === "/" : pathname.startsWith(href)) ? "page" : undefined}>{label}</Link>)}
-          <Link href="/contact" onClick={close}>Contact</Link><Link href="/sign-in" onClick={close}>Sign in</Link>
+          <Link href="/contact" onClick={close}>Contact</Link>{auth?.user ? <button className="header-sign-out" type="button" onClick={() => void signOut()}>Sign out</button> : <Link href="/sign-in" onClick={close}>Sign in</Link>}
           <a href={GOOGLE_PLAY_URL}>Get the App ↗</a>
         </nav>
       </Container>

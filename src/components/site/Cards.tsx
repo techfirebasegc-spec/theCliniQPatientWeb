@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { PublicDoctor, PublicService } from "../../lib/api";
+import type { PublicClinic, PublicDoctor, PublicService } from "../../lib/api";
 
 function price(service: PublicService) {
   const currency = service.currency || "INR";
@@ -16,6 +16,9 @@ export function DoctorCard({ doctor }: { doctor: PublicDoctor }) {
 }
 export function ServiceCard({ service }: { service: PublicService }) {
   return <Link className="card card-link service-card" href={`/services/${encodeURIComponent(service.id)}`}><p className="eyebrow">Healthcare service</p><h3>{service.name}</h3><p>{service.description ?? "Explore service details and current availability."}</p><div className="card-bottom"><span>{price(service)}</span><span>View service <span aria-hidden="true">↗</span></span></div></Link>;
+}
+export function ClinicCard({ clinic }: { clinic: PublicClinic }) {
+  return <Link className="card card-link" href={`/clinics/${encodeURIComponent(clinic.id)}`}><p className="eyebrow">Clinic</p><h3>{clinic.displayName}</h3><p>Explore this clinic&apos;s published services and availability.</p><div className="card-bottom"><span>View clinic</span><span aria-hidden="true">↗</span></div></Link>;
 }
 export function SpecialtyCard({ title, description, slug }: { title: string; description: string; slug: string }) {
   return <Link className="card card-link" href={`/specialties/${slug}`}><p className="eyebrow">Explore care</p><h3>{title}</h3><p>{description}</p><div className="card-bottom"><span>Learn more</span><span aria-hidden="true">↗</span></div></Link>;

@@ -1,5 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
+import { Suspense } from "react";
 import { SignInPanel } from "../../src/components/SignInPanel";
 import { Container } from "../../src/components/site/Container";
 import { SiteLayout } from "../../src/components/site/SiteLayout";
@@ -19,7 +20,7 @@ export default function SignInPage() {
         <div className="auth-explore"><span>Just exploring?</span><Link href="/doctors">Meet our doctors <span aria-hidden="true">→</span></Link><Link href="/services">Discover services <span aria-hidden="true">→</span></Link></div>
         <a className="text-link" href={GOOGLE_PLAY_URL}>Prefer your phone? Get the App ↗</a>
       </aside>
-      <SignInPanel />
+      <Suspense><SignInPanel /></Suspense>
     </div>
   </Container></section></SiteLayout>;
 }

@@ -48,6 +48,7 @@ button:disabled { cursor: wait; opacity: .6; }
 .nav-link[aria-current="page"]::after { content: ""; position: absolute; bottom: 14px; height: 2px; left: 0; right: 0; background: var(--secondary); }
 .header-actions { display: flex; align-items: center; gap: 16px; white-space: nowrap; }
 .app-link,.sign-in-link { font-size: 13px; font-weight: 600; text-decoration: none; }
+.header-sign-out { appearance: none; border: 0; background: transparent; color: inherit; cursor: pointer; padding: 0; font: inherit; }
 .app-link { color: var(--secondary); }
 .header-actions .button { font-size: 12px; padding: 10px 14px; min-height: 42px; }
 .menu-toggle { display: none; align-items: center; justify-content: center; width: 42px; height: 42px; border: 1px solid var(--line); background: #fff; border-radius: 8px; color: var(--primary-strong); padding: 0; }
@@ -120,6 +121,8 @@ button:disabled { cursor: wait; opacity: .6; }
 .slot { padding: 14px; border: 1px solid var(--line); background: var(--surface); border-radius: 6px; }
 .slot strong,.slot small { display: block; }
 .slot small { color: var(--muted); margin-top: 6px; }
+.slot-button { width: 100%; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.slot-button[aria-pressed="true"] { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
 .app-promotion { display: grid; grid-template-columns: .85fr 1.15fr; gap: 64px; align-items: center; }
 .app-identity { background: var(--surface-deep); border: 1px solid var(--line); padding: 55px 30px; display: flex; flex-direction: column; align-items: center; border-radius: 10px; }
 .app-identity img { width: 260px; height: auto; margin-bottom: 14px; }
@@ -206,6 +209,15 @@ button:disabled { cursor: wait; opacity: .6; }
 .field--full { grid-column: 1 / -1; }
 .form-card { max-width: 720px; }
 .form-note { font-size: 12px!important; margin-top: 18px!important; }
+.join-options { align-items: stretch; }
+.join-option { display: flex; flex-direction: column; }
+.join-option > .button,.join-option > .coming-soon { margin-top: auto; align-self: flex-start; }
+.join-option > p:not(.eyebrow) { margin-bottom: 26px; }
+.coming-soon { display: inline-flex; align-items: center; min-height: 46px; padding: 11px 20px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted); background: var(--surface); font-size: 14px; font-weight: 600; }
+.application-card { margin-inline: auto; padding: 32px; border: 1px solid var(--line); border-radius: var(--radius); background: #fff; box-shadow: var(--shadow); }
+.application-card h1 { font-size: clamp(27px,3vw,34px); margin-bottom: 14px; }
+.application-form { margin-top: 28px; }
+.application-form .button { margin-top: 4px; }
 .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 22px; }
 .error { color: var(--danger); margin-top: 18px; font-size: 14px; }
 .status { color: var(--secondary); margin-top: 18px; }
@@ -220,6 +232,7 @@ button:disabled { cursor: wait; opacity: .6; }
   .menu-toggle { display: flex; }
   .mobile-nav:not([hidden]) { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; padding: 16px 0 24px; border-top: 1px solid var(--line); }
   .mobile-nav a { padding: 10px 12px; font-size: 14px; text-decoration: none; border-radius: 6px; }
+  .mobile-nav .header-sign-out { padding: 10px 12px; text-align: left; font-size: 14px; border-radius: 6px; }
   .mobile-nav a:hover,.mobile-nav a[aria-current] { color: var(--primary); background: var(--surface-deep); }
   .hero-grid { gap: 30px; }
   .footer-grid { gap: 26px; }

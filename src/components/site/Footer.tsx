@@ -5,7 +5,7 @@ import { CONTACT_EMAIL, GOOGLE_PLAY_URL } from "./links";
 
 const groups = [
   { title: "Explore care", links: [["Home", "/"], ["Doctors", "/doctors"], ["Services", "/services"], ["Specialties", "/specialties"], ["Health", "/health"]] },
-  { title: "The CliniQ", links: [["About", "/about"], ["Contact", "/contact"], ["Locations", "/locations"], ["Careers", "/careers"], ["Partners", "/partners"]] },
+  { title: "The CliniQ", links: [["About", "/about"], ["Contact", "/contact"], ["Locations", "/locations"], ["Join Us", "/join-us"], ["Careers", "/careers"], ["Partners", "/partners"]] },
 ];
 
 export function Footer() {

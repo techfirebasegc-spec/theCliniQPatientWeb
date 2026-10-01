@@ -1,17 +1,26 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { useAuth } from "../providers/AuthProvider";
 
 export function SignInPanel() {
   const { loading, error, platformSessionEstablished, phoneOtpPending, signInWithGoogle, sendPhoneOtp, verifyPhoneOtp } = useAuth();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const recaptcha = useRef<HTMLDivElement>(null);
   const [phoneNumber, setPhoneNumber] = useState("");
   const [code, setCode] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const busy = loading || sending;
+  const returnTo = searchParams.get("returnTo");
+  const safeReturnTo = returnTo?.startsWith("/") && !returnTo.startsWith("//") && !returnTo.startsWith("/sign-in") ? returnTo : null;
+
+  useEffect(() => {
+    if (platformSessionEstablished && safeReturnTo) router.replace(safeReturnTo);
+  }, [platformSessionEstablished, router, safeReturnTo]);
 
   const sendCode = async (event: FormEvent) => {
     event.preventDefault(); setLocalError(null);
