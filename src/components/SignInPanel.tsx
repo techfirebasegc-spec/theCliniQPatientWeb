@@ -6,7 +6,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 import { useAuth } from "../providers/AuthProvider";
 
 export function SignInPanel() {
-  const { loading, error, platformSessionEstablished, phoneOtpPending, signInWithGoogle, sendPhoneOtp, verifyPhoneOtp } = useAuth();
+  const { user, loading, error, platformSessionEstablished, patientProfile, phoneOtpPending, signInWithGoogle, sendPhoneOtp, verifyPhoneOtp, retryPatientProfile } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const recaptcha = useRef<HTMLDivElement>(null);
@@ -54,8 +54,12 @@ export function SignInPanel() {
       <div ref={recaptcha} />
     </>}
     {loading && !platformSessionEstablished ? <p className="auth-status" role="status">Checking your sign-in…</p> : null}
-    {error || localError ? <div className="auth-error" role="alert"><strong>Sign-in needs your attention</strong><p>{localError ?? error}</p></div> : null}
+    {error || localError ? <div className="auth-error" role="alert"><strong>Sign-in needs your attention</strong><p>{localError ?? error}</p>{userCanRetry(Boolean(user), patientProfile, error) ? <button className="button" type="button" disabled={busy} onClick={() => { void retryPatientProfile().catch(() => undefined); }}>Retry profile setup</button> : null}</div> : null}
     <p className="auth-legal">Learn how The CliniQ works: <Link href="/privacy">Privacy</Link> and <Link href="/terms">Terms</Link>.</p>
     <Link className="auth-back" href="/">← Back to home</Link>
   </section>;
+}
+
+function userCanRetry(authenticated: boolean, profile: { status: string } | null, error: string | null): boolean {
+  return authenticated && profile === null && error !== null;
 }

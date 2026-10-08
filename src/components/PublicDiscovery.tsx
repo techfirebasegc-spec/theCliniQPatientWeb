@@ -2,13 +2,13 @@
 
 import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
-import { getPublicAvailability, getPublicDoctor, listPublicDoctors, listPublicServices, type PublicAvailability, type PublicDoctor, type PublicService } from "../lib/api";
+import { getPublicAvailability, getPublicDoctor, listPublicDoctors, listPublicServices, type PublicAvailability, type PublicDoctor, type PublicProfileService, type PublicService } from "../lib/api";
 
 function message(error: unknown): string {
   return error instanceof Error ? error.message : "Unable to load public discovery information.";
 }
 
-function price(service: PublicService): string {
+function price(service: Pick<PublicService, "currency" | "amountMinor">): string {
   try {
     const digits = new Intl.NumberFormat(undefined, { style: "currency", currency: service.currency }).resolvedOptions().maximumFractionDigits ?? 0;
     if (!/^\d+$/.test(service.amountMinor)) throw new Error("Invalid minor amount.");
@@ -47,12 +47,12 @@ export function DoctorDirectory() {
   }, []);
   const search = (event: FormEvent) => { event.preventDefault(); void load(query.trim() || undefined); };
 
-  return <><h1 className="page-title">Find a doctor</h1><form className="actions" onSubmit={search}><label className="field"><span className="muted">Search by name</span><input value={query} onChange={(event) => setQuery(event.target.value)} /></label><button className="button" disabled={loading}>Search</button></form>{loading ? <p className="status">Loading doctors…</p> : null}{error ? <p className="error" role="alert">{error}</p> : null}{!loading && !error && doctors.length === 0 ? <p className="status">No public doctors match your search.</p> : null}<section className="results">{doctors.map((doctor) => <Link className="result-card" href={`/doctors/${encodeURIComponent(doctor.id)}`} key={doctor.id}><h2>{doctor.displayName ?? "Doctor"}</h2></Link>)}</section></>;
+  return <><h1 className="page-title">Find a doctor</h1><form className="actions" onSubmit={search}><label className="field"><span className="muted">Search by name</span><input value={query} onChange={(event) => setQuery(event.target.value)} /></label><button className="button" disabled={loading}>Search</button></form>{loading ? <p className="status">Loading doctors…</p> : null}{error ? <p className="error" role="alert">{error}</p> : null}{!loading && !error && doctors.length === 0 ? <p className="status">No public doctors match your search.</p> : null}<section className="results">{doctors.map((doctor) => <Link className="result-card" href={`/doctors/${encodeURIComponent(doctor.slug)}`} key={doctor.slug}><h2>{doctor.displayName ?? "Doctor"}</h2></Link>)}</section></>;
 }
 
 export function DoctorDetail({ doctorProfileId }: { doctorProfileId: string }) {
-  const [doctor, setDoctor] = useState<PublicDoctor | null>(null);
-  const [services, setServices] = useState<PublicService[]>([]);
+  const [doctor, setDoctor] = useState<Omit<PublicDoctor, "id"> | null>(null);
+  const [services, setServices] = useState<PublicProfileService[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => { let active = true; void getPublicDoctor(doctorProfileId).then((result) => { if (active) { setDoctor(result.doctor); setServices(result.services); } }).catch((cause: unknown) => { if (active) setError(message(cause)); }).finally(() => { if (active) setLoading(false); }); return () => { active = false; }; }, [doctorProfileId]);
@@ -92,8 +92,8 @@ export function ServiceDetail({ serviceExposureId }: { serviceExposureId: string
   return <><Link className="back-link" href="/services">Back to services</Link><h1 className="page-title">{service.name}</h1>{service.description ? <p>{service.description}</p> : null}<p className="price">{price(service)}</p><p className="muted">{providerLabel(service)}</p><form className="actions" onSubmit={loadAvailability}><label className="field"><span className="muted">Choose a date</span><input type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></label><button className="button" disabled={loadingAvailability}>{loadingAvailability ? "Loading…" : "Show availability"}</button></form>{error ? <p className="error" role="alert">{error}</p> : null}{availability ? <AvailabilitySlots availability={availability} /> : null}</>;
 }
 
-function ServiceCard({ service, showDoctorId = false }: { service: PublicService; showDoctorId?: boolean }) {
-  return <Link className="result-card" href={`/services/${encodeURIComponent(service.id)}`}><h3>{service.name}</h3>{service.description ? <p>{service.description}</p> : null}<p className="price">{price(service)}</p>{showDoctorId ? <p className="muted">{providerLabel(service)}</p> : null}</Link>;
+function ServiceCard({ service, showDoctorId = false }: { service: PublicService | PublicProfileService; showDoctorId?: boolean }) {
+  return <Link className="result-card" href={`/services/offering/${encodeURIComponent(service.id)}`}><h3>{service.name}</h3>{service.description ? <p>{service.description}</p> : null}<p className="price">{price(service)}</p>{showDoctorId && "provider" in service ? <p className="muted">{providerLabel(service)}</p> : null}</Link>;
 }
 
 function providerLabel(service: PublicService): string { return service.provider.kind === "DOCTOR" ? `Doctor profile: ${service.provider.doctorProfileId}` : `Clinic: ${service.provider.clinicId}`; }

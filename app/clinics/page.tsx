@@ -1,4 +1,5 @@
 import { ClinicCard } from "../../src/components/site/Cards";
+import { directoryPage, DirectoryPagination, pagedItems } from "../../src/components/site/DirectoryPagination";
 import { Container } from "../../src/components/site/Container";
 import { PageHero } from "../../src/components/site/PageHero";
 import { Section } from "../../src/components/site/Section";
@@ -8,8 +9,9 @@ import { publicClinics } from "../../src/lib/public-api-server";
 
 export const metadata = pageMetadata("Clinics", "Explore clinics with published services and availability at The CliniQ.", "/clinics");
 
-export default async function ClinicsPage({ searchParams }: { searchParams: Promise<{ q?: string }> }) {
-  const { q } = await searchParams;
+export default async function ClinicsPage({ searchParams }: { searchParams: Promise<{ q?: string; page?: string }> }) {
+  const { q, page: pageValue } = await searchParams;
   const clinics = await publicClinics(q);
-  return <SiteLayout><PageHero eyebrow="Public directory" title="Explore clinics" description="Browse clinics with published services and availability." /><Section><Container><div className="directory-toolbar"><div><p className="eyebrow">Available clinics</p><h2 className="section-heading">Find care near your preferred clinic.</h2></div><form className="search-form"><label className="field"><span className="muted">Search by clinic name</span><input className="input" name="q" defaultValue={q} /></label><button className="button">Search</button></form></div>{clinics.length ? <div className="grid grid--three">{clinics.map((clinic) => <ClinicCard clinic={clinic} key={clinic.id} />)}</div> : <p className="directory-empty">No public clinics are available right now. Published clinics will appear here when available.</p>}</Container></Section></SiteLayout>;
+  const listing = pagedItems(clinics, directoryPage(pageValue));
+  return <SiteLayout><PageHero eyebrow="Public directory" title="Explore clinics" description="Browse clinics with published services and availability." /><Section><Container><div className="directory-toolbar"><div><p className="eyebrow">Available clinics</p><h2 className="section-heading">Find care near your preferred clinic.</h2></div><form className="search-form"><label className="field"><span className="muted">Search by clinic name</span><input className="input" name="q" defaultValue={q} /></label><button className="button">Search</button></form></div>{clinics.length ? <><p className="directory-result-count">{clinics.length} {clinics.length === 1 ? "clinic" : "clinics"} available</p><div className="grid grid--three">{listing.items.map((clinic) => <ClinicCard clinic={clinic} key={clinic.id} />)}</div><DirectoryPagination pathname="/clinics" query={q} page={listing.currentPage} total={clinics.length} pageSize={listing.pageSize} /></> : <p className="directory-empty">No public clinics are available right now. Published clinics will appear here when available.</p>}</Container></Section></SiteLayout>;
 }

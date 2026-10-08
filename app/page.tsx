@@ -25,8 +25,7 @@ export default async function HomePage() {
           <p className="eyebrow"><span className="eyebrow-line" />Your Health Partner</p>
           <h1>Healthcare, with a<br /><em>clearer next step.</em></h1>
           <p>Find a doctor, explore available services, and understand your options before your consultation.</p>
-          <div className="hero-actions"><Button href={BOOKING_URL}>Book Consultation <span aria-hidden="true">↗</span></Button><Button href="/doctors" secondary>Meet our doctors</Button></div>
-          <p className="hero-caption">Consultation booking continues on the existing The CliniQ website.</p>
+          <div className="hero-actions"><Button href={BOOKING_URL}>Book an appointment</Button><Button href="/doctors" secondary>Meet our doctors</Button></div>
         </div>
         <figure className="hero-visual">
           <Image src="/brand/consultation.png" alt="Illustrative healthcare consultation" width={1536} height={1024} priority sizes="(max-width: 720px) 100vw, 46vw" />
@@ -36,7 +35,7 @@ export default async function HomePage() {
       <nav className="care-paths" aria-label="Explore The CliniQ">
         <Link href="/doctors"><span className="path-number">01</span><div><strong>Meet our doctors</strong><span>Start with a doctor profile</span></div><span aria-hidden="true">↗</span></Link>
         <Link href="/services"><span className="path-number">02</span><div><strong>Explore services</strong><span>Understand your care options</span></div><span aria-hidden="true">↗</span></Link>
-        <Link href="/health"><span className="path-number">03</span><div><strong>Health information</strong><span>Prepare for better conversations</span></div><span aria-hidden="true">↗</span></Link>
+        <Link href="/clinics"><span className="path-number">03</span><div><strong>Explore clinics</strong><span>Find published clinic services</span></div><span aria-hidden="true">↗</span></Link>
       </nav>
     </Container></section>
     <Section><Container>

@@ -2,7 +2,7 @@
 
 import { ConfirmationResult, GoogleAuthProvider, RecaptchaVerifier, User, onAuthStateChanged, signInWithPhoneNumber, signInWithPopup, signOut } from "firebase/auth";
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { establishPlatformSession, logoutPlatformSession } from "../lib/api";
+import { createPatientProfile, establishPlatformSession, getPatientProfile, logoutPlatformSession, PlatformApiError, type PatientProfile } from "../lib/api";
 import { firebaseAuth } from "../lib/firebase";
 
 type AuthContextValue = {
@@ -10,10 +10,12 @@ type AuthContextValue = {
   loading: boolean;
   error: string | null;
   platformSessionEstablished: boolean;
+  patientProfile: PatientProfile | null;
   phoneOtpPending: boolean;
   signInWithGoogle: () => Promise<void>;
   sendPhoneOtp: (phoneNumber: string, recaptchaContainer: HTMLElement) => Promise<void>;
   verifyPhoneOtp: (code: string) => Promise<void>;
+  retryPatientProfile: () => Promise<void>;
   logout: () => Promise<void>;
 };
 
@@ -24,23 +26,52 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [platformSessionEstablished, setPlatformSessionEstablished] = useState(false);
+  const [patientProfile, setPatientProfile] = useState<PatientProfile | null>(null);
   const [confirmation, setConfirmation] = useState<ConfirmationResult | null>(null);
   const exchangeInFlight = useRef<Promise<void> | null>(null);
+  const profileEnsureInFlight = useRef<Promise<PatientProfile> | null>(null);
   const recaptcha = useRef<RecaptchaVerifier | null>(null);
+
+  const ensureActivePatientProfile = useCallback(async (nextUser: User): Promise<PatientProfile> => {
+    if (profileEnsureInFlight.current) return profileEnsureInFlight.current;
+    const operation = (async () => {
+      let profile: PatientProfile;
+      try {
+        profile = await getPatientProfile();
+      } catch (cause) {
+        if (!(cause instanceof PlatformApiError) || cause.status !== 404 || cause.code !== "PATIENT_PROFILE_NOT_FOUND") throw cause;
+        try {
+          profile = await createPatientProfile(nextUser.displayName?.trim() || undefined);
+        } catch (createCause) {
+          if (!(createCause instanceof PlatformApiError) || createCause.status !== 409) throw createCause;
+          profile = await getPatientProfile();
+        }
+      }
+      setPatientProfile(profile);
+      if (profile.status !== "ACTIVE") throw new Error("PATIENT_PROFILE_INACTIVE");
+      return profile;
+    })().finally(() => { profileEnsureInFlight.current = null; });
+    profileEnsureInFlight.current = operation;
+    return operation;
+  }, []);
 
   const establishSession = useCallback(async (nextUser: User) => {
     if (exchangeInFlight.current) return exchangeInFlight.current;
-    const request = establishPlatformSession(await nextUser.getIdToken()).then(() => {
+    const request = (async () => {
+      try { await establishPlatformSession(await nextUser.getIdToken()); }
+      catch { throw new Error("PLATFORM_SESSION_FAILED"); }
+      await ensureActivePatientProfile(nextUser);
+    })().then(() => {
       setPlatformSessionEstablished(true);
       setError(null);
     }).catch((cause: unknown) => {
       setPlatformSessionEstablished(false);
-      setError(cause instanceof Error ? cause.message : "Unable to establish the Platform session.");
+      setError(profileError(cause));
       throw cause;
     }).finally(() => { exchangeInFlight.current = null; });
     exchangeInFlight.current = request;
     return request;
-  }, []);
+  }, [ensureActivePatientProfile]);
 
   useEffect(() => {
     let active = true;
@@ -50,7 +81,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (!active) return;
         setUser(nextUser);
         if (!nextUser) {
-          setPlatformSessionEstablished(false);
+          setPlatformSessionEstablished(false); setPatientProfile(null);
           setLoading(false);
           return;
         }
@@ -103,11 +134,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     let platformFailure: unknown;
     try { await logoutPlatformSession(); } catch (cause) { platformFailure = cause; }
     try { await signOut(firebaseAuth()); }
-    finally { setUser(null); setPlatformSessionEstablished(false); setConfirmation(null); setLoading(false); }
+    finally { setUser(null); setPatientProfile(null); setPlatformSessionEstablished(false); setConfirmation(null); setLoading(false); }
     if (platformFailure) { setError("Firebase was signed out, but the Platform logout request could not be completed."); throw platformFailure; }
   }, []);
 
-  return <AuthContext.Provider value={{ user, loading, error, platformSessionEstablished, phoneOtpPending: Boolean(confirmation), signInWithGoogle, sendPhoneOtp, verifyPhoneOtp, logout }}>{children}</AuthContext.Provider>;
+  const retryPatientProfile = useCallback(async () => {
+    if (!user) throw new Error("Authentication is required.");
+    setLoading(true); setError(null); setPlatformSessionEstablished(false);
+    try { await ensureActivePatientProfile(user); setPlatformSessionEstablished(true); }
+    catch (cause) { setError(profileError(cause)); throw cause; }
+    finally { setLoading(false); }
+  }, [ensureActivePatientProfile, user]);
+
+  return <AuthContext.Provider value={{ user, loading, error, platformSessionEstablished, patientProfile, phoneOtpPending: Boolean(confirmation), signInWithGoogle, sendPhoneOtp, verifyPhoneOtp, retryPatientProfile, logout }}>{children}</AuthContext.Provider>;
+}
+
+function profileError(cause: unknown): string {
+  if (cause instanceof Error && cause.message === "PATIENT_PROFILE_INACTIVE") return "Your patient profile is not active. Please contact support before booking.";
+  if (cause instanceof Error && cause.message === "PLATFORM_SESSION_FAILED") return "We couldn’t establish your session. Please sign in again.";
+  return "We couldn’t prepare your patient profile. Please try again.";
 }
 
 export function useAuth(): AuthContextValue {

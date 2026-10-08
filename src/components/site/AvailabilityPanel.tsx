@@ -1,104 +1,58 @@
 "use client";
 import { useRouter } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
-import { beginAppointmentBooking, getPublicAvailability, PlatformApiError, type PublicAvailability } from "../../lib/api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { beginAppointmentBooking, createAppointmentPaymentOrder, getPublicApplicableServiceVersion, getPublicAvailability, PlatformApiError, recoverAppointmentPayment, type PublicApplicableServiceVersion, type PublicAvailability, type PublicClinicServiceDoctorAssignment, type PublicPresentation } from "../../lib/api";
+import { loadRazorpayCheckout } from "../../lib/razorpay-checkout";
 import { useAuth } from "../../providers/AuthProvider";
+import { formatPublicServicePrice } from "./Cards";
 
-const pendingBookingKey = "cliniq.patient.pending-booking.v1";
-type Slot = PublicAvailability["slots"][number];
-type SelectedSlot = { slot: Slot; idempotencyKey: string };
-type StoredBooking = { serviceExposureId: string; requestedLocalAt: string; startsAt: string; endsAt: string; idempotencyKey: string };
+const pendingBookingKey = "cliniq.patient.pending-booking.v1", pendingPaymentKey = "cliniq.patient.pending-payment.v1", searchHorizonDays = 14;
+type Slot = PublicAvailability["slots"][number]; type SelectedSlot = { slot: Slot; idempotencyKey: string }; type StoredBooking = { serviceExposureId: string; requestedLocalAt: string; startsAt: string; endsAt: string; idempotencyKey: string; clinicServiceDoctorAssignmentId?: string };
+type StoredPayment = { serviceExposureId: string; intentId: string };
+type PaymentStage = "READY" | "PREPARING" | "CHECKOUT" | "CONFIRMING" | "CONFIRMED";
+type Provider = { kind: "DOCTOR" | "CLINIC"; name: string };
+function today() { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function addDays(date: string, days: number) { const d = new Date(`${date}T00:00:00`); d.setDate(d.getDate() + days); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
+function displayDate(date: string, long = false) { const d = new Date(`${date}T00:00:00`); return Number.isNaN(d.getTime()) ? date : d.toLocaleDateString("en-IN", long ? { weekday: "long", day: "numeric", month: "long" } : { weekday: "short", day: "numeric", month: "short" }); }
+function time(local: string) { const match = /T(\d{2}):(\d{2})/.exec(local); if (!match) return local; const hour = Number(match[1]); return `${hour % 12 || 12}:${match[2]} ${hour < 12 ? "AM" : "PM"}`; }
+function slotRange(slot: Slot) { const duration = Math.round((Date.parse(slot.endsAt) - Date.parse(slot.startsAt)) / 60_000); const match = /T(\d{2}):(\d{2})/.exec(slot.localStart); if (!match || !Number.isFinite(duration)) return time(slot.localStart); const minutes = (Number(match[1]) * 60 + Number(match[2]) + duration) % 1440, hour = Math.floor(minutes / 60); return `${time(slot.localStart)} – ${hour % 12 || 12}:${String(minutes % 60).padStart(2, "0")} ${hour < 12 ? "AM" : "PM"}`; }
+function slotPeriod(slot: Slot) { const hour = Number(/T(\d{2}):/.exec(slot.localStart)?.[1]); return hour < 12 ? "Morning" : hour < 17 ? "Afternoon" : "Evening"; }
+function stored(value: unknown, exposure: string): StoredBooking | null { if (!value || typeof value !== "object") return null; const v = value as Partial<StoredBooking>; return v.serviceExposureId === exposure && typeof v.requestedLocalAt === "string" && typeof v.startsAt === "string" && typeof v.endsAt === "string" && typeof v.idempotencyKey === "string" ? v as StoredBooking : null; }
+function storedPayment(value: unknown, exposure: string): StoredPayment | null { if (!value || typeof value !== "object") return null; const v = value as Partial<StoredPayment>; return v.serviceExposureId === exposure && typeof v.intentId === "string" && v.intentId ? v as StoredPayment : null; }
 
-function dateToday() { const now = new Date(); return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`; }
-function bookingError(error: unknown): string {
-  if (error instanceof PlatformApiError) {
-    if (error.status === 409) return "That slot is no longer available. Choose another time.";
-    if (error.status === 401) return "Please sign in again to continue booking.";
-  }
-  return "We couldn’t start your booking. Please try again.";
-}
-function storedSelection(value: unknown, serviceExposureId: string): StoredBooking | null {
-  if (!value || typeof value !== "object") return null;
-  const item = value as Partial<StoredBooking>;
-  return item.serviceExposureId === serviceExposureId && typeof item.requestedLocalAt === "string" && typeof item.startsAt === "string" && typeof item.endsAt === "string" && typeof item.idempotencyKey === "string" ? item as StoredBooking : null;
-}
-
-export function AvailabilityPanel({ serviceExposureId }: { serviceExposureId: string }) {
-  const router = useRouter();
-  const { loading: authenticationLoading, platformSessionEstablished } = useAuth();
-  const [date, setDate] = useState(dateToday);
-  const [data, setData] = useState<PublicAvailability | null>(null);
-  const [selected, setSelected] = useState<SelectedSlot | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [paymentPending, setPaymentPending] = useState(false);
-
-  useEffect(() => {
-    const raw = window.sessionStorage.getItem(pendingBookingKey);
-    if (!raw) return;
-    try {
-      const pending = storedSelection(JSON.parse(raw), serviceExposureId);
-      if (!pending) return;
-      void getPublicAvailability(serviceExposureId, pending.requestedLocalAt.slice(0, 10)).then((availability) => {
-        setDate(pending.requestedLocalAt.slice(0, 10));
-        setData(availability);
-        const slot = availability.slots.find((candidate) => candidate.startsAt === pending.startsAt && candidate.endsAt === pending.endsAt && candidate.localStart === pending.requestedLocalAt);
-        if (slot) setSelected({ slot, idempotencyKey: pending.idempotencyKey });
-        else window.sessionStorage.removeItem(pendingBookingKey);
-      }).catch(() => setError("Availability could not be loaded right now."));
-    } catch { window.sessionStorage.removeItem(pendingBookingKey); }
-  }, [serviceExposureId]);
-
-  const load = async (event: FormEvent) => {
-    event.preventDefault();
-    setLoading(true); setError(null); setSelected(null); setPaymentPending(false);
-    try { setData(await getPublicAvailability(serviceExposureId, date)); }
-    catch { setData(null); setError("Availability could not be loaded right now."); }
-    finally { setLoading(false); }
-  };
-
-  const chooseSlot = (slot: Slot) => {
-    setSelected({ slot, idempotencyKey: crypto.randomUUID() });
-    setError(null); setPaymentPending(false);
-  };
-
-  const saveAndSignIn = (selection: SelectedSlot) => {
-    const pending: StoredBooking = { serviceExposureId, requestedLocalAt: selection.slot.localStart, startsAt: selection.slot.startsAt, endsAt: selection.slot.endsAt, idempotencyKey: selection.idempotencyKey };
-    window.sessionStorage.setItem(pendingBookingKey, JSON.stringify(pending));
-    router.push(`/sign-in?returnTo=${encodeURIComponent(`/services/${serviceExposureId}`)}`);
-  };
-
-  const continueBooking = async () => {
-    if (!selected || submitting) return;
-    if (authenticationLoading) { setError("Checking your secure session. Please try again in a moment."); return; }
-    if (!platformSessionEstablished) { saveAndSignIn(selected); return; }
-    setSubmitting(true); setError(null);
-    try {
-      await beginAppointmentBooking({ serviceExposureId, requestedLocalAt: selected.slot.localStart, idempotencyKey: selected.idempotencyKey });
-      window.sessionStorage.removeItem(pendingBookingKey);
-      setPaymentPending(true);
-    } catch (cause) {
-      if (cause instanceof PlatformApiError && cause.status === 401) saveAndSignIn(selected);
-      else setError(bookingError(cause));
-    } finally { setSubmitting(false); }
-  };
-
-  return <section className="card" aria-labelledby="availability-title">
-    <h2 id="availability-title">Check public availability</h2>
-    <p>Select an available time to continue with your booking.</p>
-    <form className="search-form" onSubmit={load} style={{ marginTop: 18 }}>
-      <label className="field"><span className="muted">Date</span><input className="input" type="date" value={date} onChange={(event) => setDate(event.target.value)} required /></label>
-      <button className="button" disabled={loading}>{loading ? "Loading…" : "Show times"}</button>
-    </form>
-    {error ? <p className="error" role="alert">{error}</p> : null}
-    {data ? <div className="slot-list" aria-live="polite">{data.slots.length ? data.slots.map((slot) => {
-      const chosen = selected?.slot.startsAt === slot.startsAt && selected.slot.endsAt === slot.endsAt;
-      return <button type="button" className="slot slot-button" aria-pressed={chosen} onClick={() => chooseSlot(slot)} key={slot.startsAt}>
-        <strong>{slot.localStart.slice(11, 16)}</strong><small>{slot.remainingCapacity} remaining · {data.timezone}</small>
-      </button>;
-    }) : <p className="muted">No public availability is listed for this date.</p>}</div> : null}
-    {selected && !paymentPending ? <div className="actions"><button className="button" type="button" disabled={submitting} onClick={() => { void continueBooking(); }}>{submitting ? "Starting booking…" : platformSessionEstablished ? "Continue booking" : "Sign in to continue booking"}</button></div> : null}
-    {paymentPending ? <p className="status" role="status">Your slot is reserved and payment is pending. Payment will be available in a future release.</p> : null}
+export function AvailabilityPanel({ serviceExposureId, serviceName, provider, presentation, eligibleDoctors, preferredDoctorSlug }: { serviceExposureId: string; serviceName: string; provider: Provider; presentation: PublicPresentation; eligibleDoctors: PublicClinicServiceDoctorAssignment[]; preferredDoctorSlug?: string }) {
+  const router = useRouter(), { user, loading: authenticationLoading, platformSessionEstablished } = useAuth(), theme = presentation;
+  const initialDoctor = provider.kind === "CLINIC" ? eligibleDoctors.find((doctor) => doctor.slug === preferredDoctorSlug) ?? (eligibleDoctors.length === 1 ? eligibleDoctors[0] : null) : null;
+  const [doctor, setDoctor] = useState<PublicClinicServiceDoctorAssignment | null>(initialDoctor), [date, setDate] = useState(today), [data, setData] = useState<PublicAvailability | null>(null), [selected, setSelected] = useState<SelectedSlot | null>(null), [version, setVersion] = useState<PublicApplicableServiceVersion | null>(null), [error, setError] = useState<string | null>(null), [loading, setLoading] = useState(provider.kind === "DOCTOR" || Boolean(initialDoctor)), [loadingVersion, setLoadingVersion] = useState(false), [submitting, setSubmitting] = useState(false), [reserved, setReserved] = useState(false), [paymentIntentId, setPaymentIntentId] = useState<string | null>(null), [paymentStage, setPaymentStage] = useState<PaymentStage>("READY");
+  const availabilityRequest = useRef(0), versionRequest = useRef(0), paymentInFlight = useRef(false), checkoutSucceeded = useRef(false);
+  const canBook = provider.kind === "DOCTOR" || Boolean(doctor);
+  const clear = () => { ++versionRequest.current; setSelected(null); setVersion(null); setLoadingVersion(false); setReserved(false); };
+  const load = useCallback(async (nextDate: string) => { if (!canBook) return; const request = ++availabilityRequest.current; clear(); setLoading(true); setError(null); setData(null); try { const availability = await getPublicAvailability(serviceExposureId, nextDate); if (request === availabilityRequest.current) { setDate(nextDate); setData(availability); } } catch { if (request === availabilityRequest.current) setError("We couldn’t load appointment availability."); } finally { if (request === availabilityRequest.current) setLoading(false); } }, [canBook, serviceExposureId]);
+  const nextAvailable = useCallback(async (from: string) => { if (!canBook) return; const request = ++availabilityRequest.current; clear(); setLoading(true); setError(null); setData(null); try { for (let offset = 0; offset < searchHorizonDays; offset += 1) { const candidate = addDays(from, offset), availability = await getPublicAvailability(serviceExposureId, candidate); if (request !== availabilityRequest.current) return; if (availability.slots.length) { setDate(candidate); setData(availability); return; } } if (request === availabilityRequest.current) { setDate(from); setData({ date: from, timezone: "", slots: [] }); } } catch { if (request === availabilityRequest.current) setError("We couldn’t load appointment availability."); } finally { if (request === availabilityRequest.current) setLoading(false); } }, [canBook, serviceExposureId]);
+  const selectSlot = useCallback(async (slot: Slot, idempotencyKey = crypto.randomUUID()) => { const request = ++versionRequest.current; setSelected({ slot, idempotencyKey }); setVersion(null); setLoadingVersion(true); setError(null); setReserved(false); try { const next = await getPublicApplicableServiceVersion(serviceExposureId, slot.startsAt); if (request === versionRequest.current) setVersion(next); } catch { if (request === versionRequest.current) setError("The appointment price could not be confirmed. Please choose another time or try again."); } finally { if (request === versionRequest.current) setLoadingVersion(false); } }, [serviceExposureId]);
+  useEffect(() => { if (!canBook) return; const start = window.setTimeout(() => { try { const pendingPayment = storedPayment(JSON.parse(window.sessionStorage.getItem(pendingPaymentKey) ?? "null"), serviceExposureId); if (pendingPayment) { setPaymentIntentId(pendingPayment.intentId); setReserved(true); return; } const pending = stored(JSON.parse(window.sessionStorage.getItem(pendingBookingKey) ?? "null"), serviceExposureId); if (pending && pending.clinicServiceDoctorAssignmentId === doctor?.assignmentId) { void load(pending.requestedLocalAt.slice(0, 10)); } else void nextAvailable(today()); } catch { window.sessionStorage.removeItem(pendingBookingKey); window.sessionStorage.removeItem(pendingPaymentKey); void nextAvailable(today()); } }, 0); return () => window.clearTimeout(start); }, [canBook, doctor?.assignmentId, load, nextAvailable, serviceExposureId]);
+  const confirmPayment = useCallback(async () => { if (!paymentIntentId || paymentInFlight.current) return; paymentInFlight.current = true; setPaymentStage("CONFIRMING"); setError(null); try { const recovered = await recoverAppointmentPayment(paymentIntentId); if (recovered.status === "CONFIRMED" || recovered.status === "REPLAYED") { window.sessionStorage.removeItem(pendingPaymentKey); setPaymentStage("CONFIRMED"); return; } setError("Payment is still being confirmed. Please check the status again shortly."); } catch { setError("We couldn’t confirm your payment yet. Please check the status again shortly."); } finally { paymentInFlight.current = false; } }, [paymentIntentId]);
+  const startPayment = useCallback(async () => { if (!paymentIntentId || paymentInFlight.current || paymentStage === "CONFIRMED") return; paymentInFlight.current = true; checkoutSucceeded.current = false; setPaymentStage("PREPARING"); setError(null); try { const order = await createAppointmentPaymentOrder(paymentIntentId); const amount = order.amountMinor ? Number(order.amountMinor) : Number.NaN; if (order.state !== "PENDING_PROVIDER" || !order.providerOrderId || !order.currency || !order.razorpayKeyId || !Number.isSafeInteger(amount) || amount < 0) throw new Error("Payment order is not ready."); const Razorpay = await loadRazorpayCheckout(); setPaymentStage("CHECKOUT"); const checkout = new Razorpay({ key: order.razorpayKeyId, amount, currency: order.currency, order_id: order.providerOrderId, name: "The CliniQ", description: serviceName, prefill: { name: user?.displayName ?? undefined, email: user?.email ?? undefined, contact: user?.phoneNumber ?? undefined }, handler: () => { checkoutSucceeded.current = true; void confirmPayment(); }, modal: { ondismiss: () => { if (!checkoutSucceeded.current) { setPaymentStage("READY"); setError("Payment was not completed."); } } } }); checkout.on("payment.failed", () => { checkoutSucceeded.current = false; setPaymentStage("READY"); setError("Payment was not completed. Please try again."); }); checkout.open(); } catch { setPaymentStage("READY"); setError("We couldn’t start the payment. Please try again."); } finally { paymentInFlight.current = false; } }, [confirmPayment, paymentIntentId, paymentStage, serviceName, user]);
+  const continueBooking = async () => { if (!selected || !version || submitting || reserved) return; if (authenticationLoading) { setError("Checking your secure session. Please try again in a moment."); return; } const pending: StoredBooking = { serviceExposureId, requestedLocalAt: selected.slot.localStart, startsAt: selected.slot.startsAt, endsAt: selected.slot.endsAt, idempotencyKey: selected.idempotencyKey, ...(doctor ? { clinicServiceDoctorAssignmentId: doctor.assignmentId } : {}) }; if (!platformSessionEstablished || !user) { window.sessionStorage.setItem(pendingBookingKey, JSON.stringify(pending)); router.push(`/sign-in?returnTo=${encodeURIComponent(`/services/offering/${serviceExposureId}`)}`); return; } setSubmitting(true); setError(null); try { const booking = await beginAppointmentBooking(pending); window.sessionStorage.removeItem(pendingBookingKey); window.sessionStorage.setItem(pendingPaymentKey, JSON.stringify({ serviceExposureId, intentId: booking.intent.id } satisfies StoredPayment)); setPaymentIntentId(booking.intent.id); setReserved(true); setPaymentStage("READY"); } catch (cause) { if (cause instanceof PlatformApiError && cause.status === 401) { window.sessionStorage.setItem(pendingBookingKey, JSON.stringify(pending)); router.push(`/sign-in?returnTo=${encodeURIComponent(`/services/offering/${serviceExposureId}`)}`); } else if (cause instanceof PlatformApiError && cause.status === 409) { await load(date); setError("That appointment time is no longer available. Please select another time."); } else setError("We couldn’t start your booking. Please try again."); } finally { setSubmitting(false); } };
+  const selectionLocked = reserved, choices = Array.from({ length: 7 }, (_, index) => addDays(today(), index)), shownDoctor = provider.kind === "DOCTOR" ? provider.name : doctor?.displayName, slotGroups = data?.slots.reduce<Record<string, Slot[]>>((groups, slot) => { const period = slotPeriod(slot); (groups[period] ??= []).push(slot); return groups; }, {}) ?? {};
+  const style = { "--presentation-primary": theme.primaryColor ?? "#14345e", "--presentation-accent": theme.accentColor ?? "#13796b", "--presentation-surface": theme.secondaryColor ?? "#edf5f3" } as React.CSSProperties;
+  return <section className={`booking-experience template-${theme.templateKey}`} style={style} aria-labelledby="availability-title">
+    <div className="booking-provider-summary"><p className="eyebrow">Book your appointment</p><div className="booking-provider-context"><div><span>Service</span><h2>{serviceName}</h2></div>{provider.kind === "CLINIC" ? <><div><span>Clinic</span><strong>{provider.name}</strong></div><div><span>Doctor</span><strong>{shownDoctor ? `Dr. ${shownDoctor}` : "Select an eligible doctor"}</strong></div></> : <div><span>Doctor</span><strong>Dr. {provider.name}</strong></div>}</div></div>
+    {provider.kind === "CLINIC" && eligibleDoctors.length === 0 ? <div className="booking-empty"><h2>No doctors are currently available</h2><p>This clinic service is not currently configured for online booking.</p></div> : <div className="booking-layout">
+      <div className="booking-selection">
+        {provider.kind === "CLINIC" && eligibleDoctors.length > 1 ? <fieldset className="doctor-selector"><legend>Select a doctor</legend><div>{eligibleDoctors.map((item) => <button type="button" key={item.assignmentId} className={doctor?.assignmentId === item.assignmentId ? "is-selected" : ""} aria-pressed={doctor?.assignmentId === item.assignmentId} disabled={selectionLocked} onClick={() => { setDoctor(item); }}>{`Dr. ${item.displayName}`}</button>)}</div></fieldset> : null}
+        <p className="eyebrow">Appointment availability</p><h2 id="availability-title">Select a date</h2><p className="booking-timezone">All times are in IST (India Standard Time).</p>
+        <div className="booking-date-controls"><div className="booking-date-list" aria-label="Choose an appointment date">{choices.map((choice, index) => <button key={choice} type="button" className={`booking-date${choice === date ? " is-selected" : ""}`} aria-pressed={choice === date} disabled={selectionLocked} onClick={() => { void load(choice); }}><span>{index === 0 ? "Today" : index === 1 ? "Tomorrow" : displayDate(choice).split(",")[0]}</span><strong>{displayDate(choice)}</strong></button>)}</div><label className="booking-calendar"><span>Choose another date</span><input type="date" min={today()} value={date} disabled={selectionLocked} onChange={(event) => { void load(event.target.value); }} /></label></div>
+        {loading ? <div className="booking-skeleton" role="status" aria-label="Loading available appointment times"><span /><span /><span /><span /><span /><span /></div> : null}
+        {error && !reserved ? <div className="booking-error" role="alert"><p>{error}</p><button className="text-link" type="button" onClick={() => { void nextAvailable(date); }}>Try again</button></div> : null}
+        {data && !loading ? <div className="booking-slots" aria-live="polite"><div><p className="eyebrow">Available appointments</p><h3>{displayDate(date, true)}</h3></div>{data.slots.length ? <div className="booking-slot-groups">{Object.entries(slotGroups).map(([period, slots]) => <section className="booking-slot-group" key={period}><h4>{period}</h4><div className="slot-list">{slots.map((slot) => <button type="button" className="slot slot-button" aria-pressed={selected?.slot.startsAt === slot.startsAt} disabled={selectionLocked} onClick={() => { void selectSlot(slot); }} key={slot.startsAt}><strong>{time(slot.localStart)}</strong><small>{selected?.slot.startsAt === slot.startsAt ? "Selected" : "Available"}</small></button>)}</div></section>)}</div> : <div className="booking-empty"><h3>No appointments are currently available.</h3><button className="button button--secondary" type="button" disabled={selectionLocked} onClick={() => { void nextAvailable(addDays(date, 1)); }}>Check next available</button></div>}</div> : null}
+      </div>
+      <aside className="booking-summary" aria-live="polite">
+        <p className="eyebrow">Your appointment</p><h2>{serviceName}</h2><p className="booking-provider">{provider.kind === "CLINIC" ? `${provider.name}${shownDoctor ? ` · Dr. ${shownDoctor}` : ""}` : `Dr. ${provider.name}`}</p>
+        {selected ? <dl><div><dt>Date</dt><dd>{displayDate(selected.slot.localStart.slice(0, 10), true)}</dd></div><div><dt>Time</dt><dd>{slotRange(selected.slot)}</dd></div>{version ? <div><dt>Consultation fee</dt><dd>{formatPublicServicePrice(version.price)}</dd></div> : <div><dt>Consultation fee</dt><dd>Confirming price…</dd></div>}</dl> : !reserved ? <p className="muted">Select a date and appointment time to continue.</p> : null}
+        {!reserved && selected ? <button className="button booking-continue" type="button" disabled={submitting || loadingVersion || !version} onClick={() => { void continueBooking(); }}>{submitting ? "Starting booking…" : !user ? "Sign in to continue" : "Continue booking"}</button> : null}
+        {reserved ? <div className="booking-payment" aria-live="polite"><h2>{paymentStage === "CONFIRMED" ? "Appointment confirmed" : "Appointment time reserved"}</h2>{paymentStage === "READY" ? <><p className="status">Complete payment to confirm your appointment.</p><button className="button booking-continue" type="button" onClick={() => { void startPayment(); }}>Pay securely</button><button className="text-link" type="button" onClick={() => { void confirmPayment(); }}>Check payment status</button></> : null}{paymentStage === "PREPARING" ? <p className="status">Preparing secure payment…</p> : null}{paymentStage === "CHECKOUT" ? <p className="status">Complete payment in the secure Razorpay window.</p> : null}{paymentStage === "CONFIRMING" ? <p className="status">Payment received. Confirming your appointment…</p> : null}{paymentStage === "CONFIRMED" ? <><p className="status">Your appointment is confirmed.</p><button className="button booking-continue" type="button" onClick={() => { router.push("/appointments"); }}>View appointments</button></> : null}{error ? <div className="booking-error" role="alert"><p>{error}</p>{paymentStage === "CONFIRMING" ? <button className="text-link" type="button" onClick={() => { void confirmPayment(); }}>Check payment status</button> : paymentStage !== "CONFIRMED" ? <button className="text-link" type="button" onClick={() => { void startPayment(); }}>Try payment again</button> : null}</div> : null}</div> : null}
+      </aside>
+    </div>}
   </section>;
 }
